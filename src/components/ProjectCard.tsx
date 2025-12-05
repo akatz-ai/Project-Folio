@@ -264,9 +264,9 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit, onDragStart, 
   const openInVSCode = () => {
     let uri = ''
     if (project.path_type === 'wsl') {
-      uri = `vscode://vscode-remote/wsl+${project.wsl_distro}${project.local_path}`
+      uri = `vscode://vscode-remote/wsl+${project.wsl_distro}${project.local_path}?windowId=_blank`
     } else {
-      uri = `vscode://file/${project.local_path?.replace(/\\/g, '/')}`
+      uri = `vscode://file/${project.local_path?.replace(/\\/g, '/')}?windowId=_blank`
     }
     window.open(uri, '_blank')
   }
