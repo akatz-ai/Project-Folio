@@ -1,19 +1,27 @@
 'use client'
 
 import { useAuth, useTheme } from '@/components/Providers'
-import { useRouter } from 'next/navigation'
-import { useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useEffect, Suspense } from 'react'
 
-export default function Home() {
+function HomeContent() {
   const { user, loading, signInWithGoogle } = useAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { theme, toggleTheme } = useTheme()
 
   useEffect(() => {
+    // If there's an auth code in the URL, redirect to the callback handler
+    const code = searchParams.get('code')
+    if (code) {
+      router.replace(`/auth/callback?code=${code}`)
+      return
+    }
+
     if (user) {
       router.push('/dashboard')
     }
-  }, [user, router])
+  }, [user, router, searchParams])
 
   if (loading) {
     return (
@@ -69,5 +77,17 @@ export default function Home() {
         </div>
       </main>
     </div>
+  )
+}
+
+export default function Home() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-pulse text-text-muted">Loading...</div>
+      </div>
+    }>
+      <HomeContent />
+    </Suspense>
   )
 }
