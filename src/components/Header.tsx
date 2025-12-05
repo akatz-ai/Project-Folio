@@ -1,14 +1,13 @@
 'use client'
 
-import { useSession, signIn, signOut } from 'next-auth/react'
-import { useTheme } from './Providers'
+import { useAuth, useTheme } from './Providers'
 
 interface HeaderProps {
   onAddProject?: () => void
 }
 
 export function Header({ onAddProject }: HeaderProps) {
-  const { data: session } = useSession()
+  const { user, signInWithGoogle, signOut } = useAuth()
   const { theme, toggleTheme } = useTheme()
 
   return (
@@ -36,7 +35,7 @@ export function Header({ onAddProject }: HeaderProps) {
           )}
         </button>
 
-        {session ? (
+        {user ? (
           <>
             <button onClick={onAddProject} className="btn btn-primary">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -57,7 +56,7 @@ export function Header({ onAddProject }: HeaderProps) {
             </button>
           </>
         ) : (
-          <button onClick={() => signIn('google')} className="btn btn-primary">
+          <button onClick={() => signInWithGoogle()} className="btn btn-primary">
             Sign in with Google
           </button>
         )}

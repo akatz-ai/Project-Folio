@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
-import { createServerClient } from '@/lib/supabase'
+import { createServerClient } from '@/lib/supabase-server'
 import Anthropic from '@anthropic-ai/sdk'
 import { ProjectWithRelations, NoteTag } from '@/types/database'
 
@@ -54,8 +52,10 @@ Rules:
 Current projects context will be provided.`
 
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) {
+  const supabase = await createServerClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+  if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -110,7 +110,6 @@ export async function POST(req: NextRequest) {
     }
 
     // Execute actions
-    const supabase = createServerClient()
     let updatedProjects = [...projects]
 
     for (const action of aiResponse.actions) {
@@ -133,7 +132,7 @@ export async function POST(req: NextRequest) {
         const { data, error } = await supabase
           .from('projects')
           .insert({
-            user_id: session.user.id,
+            user_id: user.id,
             title: action.title,
             description: action.description || null,
             github_url: action.github_url || null,
@@ -180,7 +179,7 @@ export async function POST(req: NextRequest) {
             .from('notes')
             .insert({
               project_id: project.id,
-              user_id: session.user.id,
+              user_id: user.id,
               tag: action.tag || 'Note',
               content: action.content || '',
             })
@@ -202,7 +201,7 @@ export async function POST(req: NextRequest) {
             .from('commands')
             .insert({
               project_id: project.id,
-              user_id: session.user.id,
+              user_id: user.id,
               command: action.command || '',
               description: action.description || '',
             })

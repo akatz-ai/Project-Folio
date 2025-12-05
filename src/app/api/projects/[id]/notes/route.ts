@@ -1,25 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
-import { createServerClient } from '@/lib/supabase'
+import { createServerClient } from '@/lib/supabase-server'
 
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) {
+  const supabase = await createServerClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+  if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const body = await req.json()
-  const supabase = createServerClient()
 
   const { data, error } = await supabase
     .from('notes')
     .insert({
       project_id: params.id,
-      user_id: session.user.id,
+      user_id: user.id,
       tag: body.tag || 'Note',
       content: body.content || '',
     })
@@ -37,13 +36,14 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) {
+  const supabase = await createServerClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+  if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const body = await req.json()
-  const supabase = createServerClient()
 
   const { data, error } = await supabase
     .from('notes')
@@ -52,7 +52,7 @@ export async function PATCH(
       updated_at: new Date().toISOString(),
     })
     .eq('id', body.note_id)
-    .eq('user_id', session.user.id)
+    .eq('user_id', user.id)
     .select()
     .single()
 
@@ -64,8 +64,10 @@ export async function PATCH(
 }
 
 export async function DELETE(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) {
+  const supabase = await createServerClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+  if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -76,13 +78,11 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: 'note_id required' }, { status: 400 })
   }
 
-  const supabase = createServerClient()
-
   const { error } = await supabase
     .from('notes')
     .delete()
     .eq('id', noteId)
-    .eq('user_id', session.user.id)
+    .eq('user_id', user.id)
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })

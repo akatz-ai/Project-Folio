@@ -1,20 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
-import { createServerClient } from '@/lib/supabase'
+import { createServerClient } from '@/lib/supabase-server'
 
 export async function GET() {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) {
+  const supabase = await createServerClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+  if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
-
-  const supabase = createServerClient()
 
   const { data, error } = await supabase
     .from('profiles')
     .select()
-    .eq('id', session.user.id)
+    .eq('id', user.id)
     .single()
 
   if (error && error.code !== 'PGRST116') {
@@ -25,7 +23,7 @@ export async function GET() {
   if (!data) {
     const { data: newProfile, error: createError } = await supabase
       .from('profiles')
-      .insert({ id: session.user.id })
+      .insert({ id: user.id })
       .select()
       .single()
 
@@ -40,13 +38,14 @@ export async function GET() {
 }
 
 export async function PATCH(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) {
+  const supabase = await createServerClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+  if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const body = await req.json()
-  const supabase = createServerClient()
 
   const { data, error } = await supabase
     .from('profiles')
@@ -54,7 +53,7 @@ export async function PATCH(req: NextRequest) {
       ...body,
       updated_at: new Date().toISOString(),
     })
-    .eq('id', session.user.id)
+    .eq('id', user.id)
     .select()
     .single()
 

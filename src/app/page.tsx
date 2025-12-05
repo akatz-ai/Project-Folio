@@ -1,22 +1,21 @@
 'use client'
 
-import { useSession, signIn } from 'next-auth/react'
+import { useAuth, useTheme } from '@/components/Providers'
 import { useRouter } from 'next/navigation'
 import { useEffect } from 'react'
-import { useTheme } from '@/components/Providers'
 
 export default function Home() {
-  const { data: session, status } = useSession()
+  const { user, loading, signInWithGoogle } = useAuth()
   const router = useRouter()
   const { theme, toggleTheme } = useTheme()
 
   useEffect(() => {
-    if (session) {
+    if (user) {
       router.push('/dashboard')
     }
-  }, [session, router])
+  }, [user, router])
 
-  if (status === 'loading') {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-pulse text-text-muted">Loading...</div>
@@ -56,7 +55,7 @@ export default function Home() {
             Sync across devices with AI-powered assistance.
           </p>
           <button
-            onClick={() => signIn('google')}
+            onClick={() => signInWithGoogle()}
             className="btn btn-primary text-base px-6 py-3"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">

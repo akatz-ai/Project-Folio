@@ -1,6 +1,6 @@
 'use client'
 
-import { useSession } from 'next-auth/react'
+import { useAuth } from '@/components/Providers'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { Header } from '@/components/Header'
@@ -10,7 +10,7 @@ import { AIChatSidebar } from '@/components/AIChatSidebar'
 import { ProjectWithRelations, PathType } from '@/types/database'
 
 export default function Dashboard() {
-  const { data: session, status } = useSession()
+  const { user, loading: authLoading } = useAuth()
   const router = useRouter()
   const [projects, setProjects] = useState<ProjectWithRelations[]>([])
   const [loading, setLoading] = useState(true)
@@ -19,17 +19,17 @@ export default function Dashboard() {
   const [showMigration, setShowMigration] = useState(false)
 
   useEffect(() => {
-    if (status === 'unauthenticated') {
+    if (!authLoading && !user) {
       router.push('/')
     }
-  }, [status, router])
+  }, [authLoading, user, router])
 
   useEffect(() => {
-    if (session) {
+    if (user) {
       fetchProjects()
       checkMigration()
     }
-  }, [session])
+  }, [user])
 
   const fetchProjects = async () => {
     try {
@@ -152,7 +152,7 @@ export default function Dashboard() {
     setProjects(projects.map(p => p.id === updated.id ? updated : p))
   }
 
-  if (status === 'loading' || loading) {
+  if (authLoading || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-pulse text-text-muted">Loading...</div>
