@@ -22,7 +22,7 @@ export async function PATCH(
     })
     .eq('id', params.id)
     .eq('user_id', user.id)
-    .select(`*, notes (*), commands (*)`)
+    .select(`*, notes (*), commands (*), links (*)`)
     .single()
 
   if (error) {

@@ -1,5 +1,6 @@
 export type NoteTag = 'Note' | 'Bug' | 'Feature' | 'Idea'
 export type PathType = 'wsl' | 'windows'
+export type LinkType = 'url' | 'vscode' | 'directory'
 
 export interface Profile {
   id: string
@@ -44,9 +45,24 @@ export interface Command {
   created_at: string
 }
 
+export interface Link {
+  id: string
+  project_id: string
+  user_id: string
+  name: string
+  description: string | null
+  link_type: LinkType
+  url: string | null
+  path: string | null
+  path_type: PathType
+  wsl_distro: string
+  created_at: string
+}
+
 export interface ProjectWithRelations extends Project {
   notes: Note[]
   commands: Command[]
+  links: Link[]
 }
 
 // For localStorage migration

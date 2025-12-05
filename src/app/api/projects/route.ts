@@ -14,13 +14,15 @@ export async function GET() {
     .select(`
       *,
       notes (*),
-      commands (*)
+      commands (*),
+      links (*)
     `)
     .eq('user_id', user.id)
     .order('sort_order', { ascending: true })
     .order('created_at', { ascending: false })
     .order('created_at', { referencedTable: 'notes', ascending: true })
     .order('created_at', { referencedTable: 'commands', ascending: true })
+    .order('created_at', { referencedTable: 'links', ascending: true })
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
@@ -69,5 +71,5 @@ export async function POST(req: NextRequest) {
   if (noteResult.error) console.error('Note insert error:', noteResult.error)
   if (commandResult.error) console.error('Command insert error:', commandResult.error)
 
-  return NextResponse.json({ ...project, notes: noteResult.data || [], commands: commandResult.data || [] })
+  return NextResponse.json({ ...project, notes: noteResult.data || [], commands: commandResult.data || [], links: [] })
 }

@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect, memo } from 'react'
-import { ProjectWithRelations, Note, Command, NoteTag } from '@/types/database'
+import { ProjectWithRelations, Note, Command, Link, NoteTag, LinkType } from '@/types/database'
 import { useToast } from './Toast'
+import { LinkEditModal } from './LinkEditModal'
 
 // Isolated textarea that manages its own state - parent re-renders won't affect it
 const IsolatedTextarea = memo(function IsolatedTextarea({
@@ -154,9 +155,10 @@ function getTimePeriod(dateStr: string) {
 
 export function ProjectCard({ project, onUpdate, onDelete, onEdit, onDragStart, onDragOver, onDrop, isDragging }: ProjectCardProps) {
   const [expanded, setExpanded] = useState(project.is_expanded)
-  const [activeTab, setActiveTab] = useState<'notes' | 'commands'>('notes')
+  const [activeTab, setActiveTab] = useState<'notes' | 'commands' | 'links'>('notes')
   const [tagFilter, setTagFilter] = useState<NoteTag | ''>('')
   const [timeFilter, setTimeFilter] = useState('')
+  const [editingLink, setEditingLink] = useState<Link | null>(null)
   const { showToast } = useToast()
 
   // Debounce timers for batching updates
@@ -362,6 +364,76 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit, onDragStart, 
     await navigator.clipboard.writeText(text)
   }
 
+  const openLink = (link: Link) => {
+    if (link.link_type === 'url' && link.url) {
+      window.open(link.url, '_blank')
+    } else if (link.link_type === 'vscode' && link.path) {
+      let uri = ''
+      if (link.path_type === 'wsl') {
+        uri = `vscode://vscode-remote/wsl+${link.wsl_distro}${link.path}?windowId=_blank`
+      } else {
+        uri = `vscode://file/${link.path.replace(/\\/g, '/')}?windowId=_blank`
+      }
+      window.open(uri, '_blank')
+    } else if (link.link_type === 'directory' && link.path) {
+      // Browsers block file:// URLs, so copy path for user to paste in Explorer
+      let pathToCopy = link.path
+      if (link.path_type === 'wsl') {
+        pathToCopy = `\\\\wsl$\\${link.wsl_distro}${link.path.replace(/\//g, '\\')}`
+      }
+      navigator.clipboard.writeText(pathToCopy)
+      showToast('Path copied - paste in Explorer address bar', 'success')
+    }
+  }
+
+  const addLink = () => {
+    const id = crypto.randomUUID()
+    const newLink: Link = {
+      id,
+      project_id: project.id,
+      user_id: '',
+      name: 'New Link',
+      description: '',
+      link_type: 'url',
+      url: '',
+      path: null,
+      path_type: 'wsl',
+      wsl_distro: 'Ubuntu',
+      created_at: new Date().toISOString(),
+    }
+    onUpdate({ ...project, links: [...(project.links || []), newLink] })
+
+    fetch(`/api/projects/${project.id}/links`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, name: 'New Link', link_type: 'url' }),
+    }).catch(() => showToast('Failed to sync link to server'))
+
+    setEditingLink(newLink)
+  }
+
+  const updateLink = (link: Link, updates: Partial<Link>) => {
+    const updatedLink = { ...link, ...updates }
+    onUpdate({
+      ...project,
+      links: (project.links || []).map(l => l.id === link.id ? updatedLink : l),
+    })
+
+    fetch(`/api/projects/${project.id}/links`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ link_id: link.id, ...updates }),
+    }).catch(() => showToast('Failed to sync link to server'))
+  }
+
+  const deleteLink = (linkId: string) => {
+    onUpdate({ ...project, links: (project.links || []).filter(l => l.id !== linkId) })
+
+    fetch(`/api/projects/${project.id}/links?link_id=${linkId}`, {
+      method: 'DELETE',
+    }).catch(() => showToast('Failed to sync delete to server'))
+  }
+
   const filteredNotes = project.notes.filter(note => {
     if (tagFilter && note.tag !== tagFilter) return false
     if (timeFilter && getTimePeriod(note.created_at) !== timeFilter) return false
@@ -488,6 +560,17 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit, onDragStart, 
             >
               Quick Commands
               {activeTab === 'commands' && (
+                <span className="absolute bottom-[-1px] left-4 right-4 h-0.5 bg-accent-primary rounded-t" />
+              )}
+            </button>
+            <button
+              className={`text-xs py-3 px-4 relative transition-colors ${
+                activeTab === 'links' ? 'text-text-primary' : 'text-text-muted hover:text-text-secondary'
+              }`}
+              onClick={() => setActiveTab('links')}
+            >
+              Links
+              {activeTab === 'links' && (
                 <span className="absolute bottom-[-1px] left-4 right-4 h-0.5 bg-accent-primary rounded-t" />
               )}
             </button>
@@ -737,6 +820,128 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit, onDragStart, 
                   </svg>
                   Add command
                 </button>
+              </>
+            )}
+
+            {activeTab === 'links' && (
+              <>
+                {/* Desktop layout */}
+                <div className="hidden sm:block space-y-2">
+                  {(project.links || []).map(link => (
+                    <div key={link.id} className="flex items-center gap-3 p-2 rounded border border-border-light group">
+                      <button
+                        onClick={() => openLink(link)}
+                        className="px-3 py-1.5 bg-accent-primary text-white text-sm rounded hover:opacity-90 transition-opacity flex items-center gap-2 flex-shrink-0"
+                      >
+                        {link.link_type === 'vscode' && (
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M17.583 2.168a1.384 1.384 0 0 1 1.52.31l3.494 3.18a1.385 1.385 0 0 1 0 2.04l-3.494 3.18a1.384 1.384 0 0 1-1.52.31l-2.2-.99-5.424 4.943L14.83 18.5l2.2-.99a1.384 1.384 0 0 1 1.52.31l3.494 3.18a1.385 1.385 0 0 1 0 2.04l-3.494 3.18a1.384 1.384 0 0 1-2.108-.31L15.37 22.5 8.46 16.5l-5.93 5.41a1.384 1.384 0 0 1-1.94-.13L.47 21.64a1.384 1.384 0 0 1 .12-1.96L6.52 14l-5.93-5.68a1.384 1.384 0 0 1-.12-1.96l.12-.14a1.384 1.384 0 0 1 1.94-.13l5.93 5.41 6.91-6-1.07-3.41a1.385 1.385 0 0 1 .31-1.52l2.97-2.71z"/>
+                          </svg>
+                        )}
+                        {link.link_type === 'directory' && (
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                          </svg>
+                        )}
+                        {link.link_type === 'url' && (
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                          </svg>
+                        )}
+                        {link.name}
+                      </button>
+
+                      <span className="flex-1 text-sm text-text-secondary truncate">
+                        {link.description || 'No description'}
+                      </span>
+
+                      <button
+                        onClick={() => setEditingLink(link)}
+                        className="opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-text-primary transition-opacity"
+                        title="Edit link"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                        </svg>
+                      </button>
+
+                      <button
+                        onClick={() => deleteLink(link.id)}
+                        className="opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-accent-bug transition-opacity"
+                        title="Delete link"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M18 6L6 18M6 6l12 12"/>
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Mobile layout */}
+                <div className="sm:hidden space-y-3">
+                  {(project.links || []).map(link => (
+                    <div key={link.id} className="border border-border-light rounded-lg p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <button
+                          onClick={() => openLink(link)}
+                          className="px-3 py-1.5 bg-accent-primary text-white text-sm rounded hover:opacity-90 flex items-center gap-2"
+                        >
+                          {link.link_type === 'vscode' && (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M17.583 2.168a1.384 1.384 0 0 1 1.52.31l3.494 3.18a1.385 1.385 0 0 1 0 2.04l-3.494 3.18a1.384 1.384 0 0 1-1.52.31l-2.2-.99-5.424 4.943L14.83 18.5l2.2-.99a1.384 1.384 0 0 1 1.52.31l3.494 3.18a1.385 1.385 0 0 1 0 2.04l-3.494 3.18a1.384 1.384 0 0 1-2.108-.31L15.37 22.5 8.46 16.5l-5.93 5.41a1.384 1.384 0 0 1-1.94-.13L.47 21.64a1.384 1.384 0 0 1 .12-1.96L6.52 14l-5.93-5.68a1.384 1.384 0 0 1-.12-1.96l.12-.14a1.384 1.384 0 0 1 1.94-.13l5.93 5.41 6.91-6-1.07-3.41a1.385 1.385 0 0 1 .31-1.52l2.97-2.71z"/>
+                            </svg>
+                          )}
+                          {link.link_type === 'directory' && (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                            </svg>
+                          )}
+                          {link.link_type === 'url' && (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                            </svg>
+                          )}
+                          {link.name}
+                        </button>
+                        <div className="flex gap-1">
+                          <button onClick={() => setEditingLink(link)} className="p-1 text-text-muted">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                            </svg>
+                          </button>
+                          <button onClick={() => deleteLink(link.id)} className="p-1 text-text-muted">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M18 6L6 18M6 6l12 12"/>
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-sm text-text-secondary">{link.description || 'No description'}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <button onClick={addLink} className="flex items-center gap-1.5 text-xs text-text-muted hover:text-accent-primary mt-3 px-3 py-2 border border-dashed border-border rounded hover:border-accent-primary transition-colors">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 5v14M5 12h14"/>
+                  </svg>
+                  Add link
+                </button>
+
+                {editingLink && (
+                  <LinkEditModal
+                    link={editingLink}
+                    onSave={(updates) => updateLink(editingLink, updates)}
+                    onClose={() => setEditingLink(null)}
+                  />
+                )}
               </>
             )}
           </div>
