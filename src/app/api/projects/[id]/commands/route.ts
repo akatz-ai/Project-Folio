@@ -14,6 +14,26 @@ export async function POST(
 
   const body = await req.json()
 
+  // If command_id is provided, this is an update (used by sendBeacon on page unload)
+  if (body.command_id) {
+    const { data, error } = await supabase
+      .from('commands')
+      .update({
+        command: body.command,
+        description: body.description,
+      })
+      .eq('id', body.command_id)
+      .eq('user_id', user.id)
+      .select()
+      .single()
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+    return NextResponse.json(data)
+  }
+
+  // Otherwise, create a new command
   const { data, error } = await supabase
     .from('commands')
     .insert({

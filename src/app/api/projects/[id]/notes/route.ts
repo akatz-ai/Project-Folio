@@ -9,11 +9,35 @@ export async function POST(
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
   if (authError || !user) {
+    console.error('POST notes auth error:', authError, 'user:', user)
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const body = await req.json()
 
+  // If note_id is provided, this is an update (used by sendBeacon on page unload)
+  if (body.note_id) {
+    const { note_id, ...updates } = body
+    console.log('POST notes update:', { note_id, updates, user_id: user.id })
+    const { data, error } = await supabase
+      .from('notes')
+      .update({
+        ...updates,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', note_id)
+      .eq('user_id', user.id)
+      .select()
+      .single()
+
+    if (error) {
+      console.error('POST notes update error:', error)
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+    return NextResponse.json(data)
+  }
+
+  // Otherwise, create a new note
   const { data, error } = await supabase
     .from('notes')
     .insert({

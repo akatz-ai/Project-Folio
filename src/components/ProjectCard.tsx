@@ -1,10 +1,100 @@
 'use client'
 
-import { useState, useRef, useCallback, memo } from 'react'
+import { useState, useRef, useCallback, useEffect, memo } from 'react'
 import { ProjectWithRelations, Note, Command, NoteTag } from '@/types/database'
 import { useToast } from './Toast'
 
-// Isolated input that manages its own state - parent re-renders won't affect it
+// Isolated textarea that manages its own state - parent re-renders won't affect it
+const IsolatedTextarea = memo(function IsolatedTextarea({
+  initialValue,
+  placeholder,
+  className,
+  onSave,
+}: {
+  initialValue: string
+  placeholder: string
+  className: string
+  onSave: (value: string) => void
+}) {
+  const [value, setValue] = useState(initialValue)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Auto-resize textarea to fit content
+  useEffect(() => {
+    const textarea = textareaRef.current
+    if (textarea) {
+      textarea.style.height = 'auto'
+      textarea.style.height = `${textarea.scrollHeight}px`
+    }
+  }, [value])
+
+  return (
+    <textarea
+      ref={textareaRef}
+      value={value}
+      placeholder={placeholder}
+      className={className}
+      rows={1}
+      onChange={e => setValue(e.target.value)}
+      onBlur={() => onSave(value)}
+      style={{ resize: 'none', overflow: 'hidden' }}
+    />
+  )
+})
+
+// Isolated input for commands with auto-resize behavior
+const IsolatedCommandInput = memo(function IsolatedCommandInput({
+  initialValue,
+  placeholder,
+  className,
+  onSave,
+}: {
+  initialValue: string
+  placeholder: string
+  className: string
+  onSave: (value: string) => void
+}) {
+  const [value, setValue] = useState(initialValue)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Auto-resize: single line up to max width, then wrap
+  useEffect(() => {
+    const textarea = textareaRef.current
+    if (textarea) {
+      // Reset to measure natural size
+      textarea.style.height = 'auto'
+      textarea.style.width = 'auto'
+
+      const naturalWidth = textarea.scrollWidth
+      const minWidth = 120
+      const maxWidth = 400
+
+      if (naturalWidth <= maxWidth) {
+        textarea.style.width = `${Math.max(naturalWidth, minWidth)}px`
+      } else {
+        textarea.style.width = `${maxWidth}px`
+      }
+
+      // Now set height based on content
+      textarea.style.height = `${textarea.scrollHeight}px`
+    }
+  }, [value])
+
+  return (
+    <textarea
+      ref={textareaRef}
+      value={value}
+      placeholder={placeholder}
+      className={className}
+      rows={1}
+      onChange={e => setValue(e.target.value)}
+      onBlur={() => onSave(value)}
+      style={{ resize: 'none', overflow: 'hidden' }}
+    />
+  )
+})
+
+// Simple isolated input for descriptions
 const IsolatedInput = memo(function IsolatedInput({
   initialValue,
   placeholder,
@@ -117,6 +207,46 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit, onDragStart, 
     }, 500)
   }, [project.id, showToast])
 
+  // Flush pending updates on page unload to prevent data loss
+  useEffect(() => {
+    const flushPendingUpdates = () => {
+      // First, blur the active element to trigger onBlur handlers on any focused inputs
+      // This ensures typed content gets added to pendingUpdates before we flush
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur()
+      }
+
+      // Clear all debounce timers
+      Object.values(debounceTimers.current).forEach(timer => clearTimeout(timer))
+      debounceTimers.current = {}
+
+      // Send all pending updates via sendBeacon (works during page unload)
+      Object.entries(pendingUpdates.current).forEach(([key, pending]) => {
+        // Key format is 'type-uuid', split only on first dash to preserve UUID
+        const firstDash = key.indexOf('-')
+        const type = key.slice(0, firstDash) as 'note' | 'command'
+        const id = key.slice(firstDash + 1)
+
+        const endpoint = type === 'note'
+          ? `/api/projects/${project.id}/notes`
+          : `/api/projects/${project.id}/commands`
+
+        const body = type === 'note'
+          ? { note_id: id, ...pending.updates }
+          : { command_id: id, ...pending.updates }
+
+        // sendBeacon queues the request to complete even after page unloads
+        // Use Blob with correct content-type since sendBeacon defaults to text/plain
+        const blob = new Blob([JSON.stringify(body)], { type: 'application/json' })
+        navigator.sendBeacon(endpoint, blob)
+      })
+      pendingUpdates.current = {}
+    }
+
+    window.addEventListener('beforeunload', flushPendingUpdates)
+    return () => window.removeEventListener('beforeunload', flushPendingUpdates)
+  }, [project.id])
+
   const toggleExpand = () => {
     const newExpanded = !expanded
     setExpanded(newExpanded)
@@ -164,7 +294,14 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit, onDragStart, 
   }
 
   const updateNote = (note: Note, updates: Partial<Note>) => {
-    // Sync to server only - UI already shows what user typed
+    // Optimistic update immediately
+    const updatedNote = { ...note, ...updates, updated_at: new Date().toISOString() }
+    onUpdate({
+      ...project,
+      notes: project.notes.map(n => n.id === note.id ? updatedNote : n),
+    })
+
+    // Debounced sync to server
     debouncedSync(note.id, 'note', updates)
   }
 
@@ -200,7 +337,14 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit, onDragStart, 
   }
 
   const updateCommand = (cmd: Command, updates: Partial<Command>) => {
-    // Sync to server only - UI already shows what user typed
+    // Optimistic update immediately
+    const updatedCmd = { ...cmd, ...updates }
+    onUpdate({
+      ...project,
+      commands: project.commands.map(c => c.id === cmd.id ? updatedCmd : c),
+    })
+
+    // Debounced sync to server
     debouncedSync(cmd.id, 'command', updates)
   }
 
@@ -409,7 +553,7 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit, onDragStart, 
                           {formatDate(note.created_at)}
                         </td>
                         <td className="py-2 px-2">
-                          <IsolatedInput
+                          <IsolatedTextarea
                             key={note.id}
                             initialValue={note.content || ''}
                             placeholder="Add a note..."
@@ -456,16 +600,16 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit, onDragStart, 
                       <tr key={cmd.id} className="border-t border-border-light group">
                         <td className="py-2 px-2 align-top">
                           <div className="relative inline-block align-top">
-                            <IsolatedInput
+                            <IsolatedCommandInput
                               key={cmd.id}
                               initialValue={cmd.command || ''}
                               placeholder="npm run dev"
-                              className="font-mono text-xs bg-bg-tertiary px-2 py-1.5 pr-8 rounded outline-none focus:ring-2 focus:ring-accent-primary min-w-[120px]"
+                              className="font-mono text-xs bg-bg-tertiary px-2 py-1.5 pr-8 rounded outline-none focus:ring-2 focus:ring-accent-primary"
                               onSave={value => updateCommand(cmd, { command: value })}
                             />
                             <button
                               onClick={() => copyCommand(cmd.command || '')}
-                              className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-text-primary transition-opacity"
+                              className="absolute right-1 top-1 opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-text-primary transition-opacity"
                             >
                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>

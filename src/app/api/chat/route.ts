@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
 import Anthropic from '@anthropic-ai/sdk'
-import { ProjectWithRelations, NoteTag } from '@/types/database'
+import { ProjectWithRelations, NoteTag, Note } from '@/types/database'
 
 export const dynamic = 'force-dynamic'
 
@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
       ? `Current projects:\n${projects.map((p: ProjectWithRelations) => {
           const authors = p.authors?.length ? ` | Authors: ${p.authors.join(', ')}` : ''
           const notesList = p.notes.length > 0
-            ? `\n  Notes: ${p.notes.map(n => `[${n.id}] ${n.tag}: "${n.content.slice(0, 50)}${n.content.length > 50 ? '...' : ''}"`).join(', ')}`
+            ? `\n  Notes: ${p.notes.map(n => `[${n.id}] ${n.tag}: "${(n.content || '').slice(0, 50)}${(n.content || '').length > 50 ? '...' : ''}"`).join(', ')}`
             : ''
           return `- "${p.title}" (id: ${p.id}): ${p.description || 'No description'}${authors}${notesList}`
         }).join('\n')}`
@@ -252,7 +252,7 @@ export async function POST(req: NextRequest) {
           if (!error && data) {
             updatedProjects = updatedProjects.map(p => ({
               ...p,
-              notes: p.notes.map(n => n.id === action.note_id ? data : n)
+              notes: p.notes.map((n: Note) => n.id === action.note_id ? data : n)
             }))
           }
         }

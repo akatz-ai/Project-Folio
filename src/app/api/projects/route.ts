@@ -19,6 +19,8 @@ export async function GET() {
     .eq('user_id', user.id)
     .order('sort_order', { ascending: true })
     .order('created_at', { ascending: false })
+    .order('created_at', { referencedTable: 'notes', ascending: true })
+    .order('created_at', { referencedTable: 'commands', ascending: true })
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
