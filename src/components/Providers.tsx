@@ -3,6 +3,7 @@
 import { useState, useEffect, createContext, useContext, ReactNode } from 'react'
 import { User, Session } from '@supabase/supabase-js'
 import { getSupabase } from '@/lib/supabase'
+import { ToastProvider } from './Toast'
 
 // Auth Context
 interface AuthContextType {
@@ -123,7 +124,9 @@ function ThemeProvider({ children }: { children: ReactNode }) {
 export function Providers({ children }: { children: ReactNode }) {
   return (
     <AuthProvider>
-      <ThemeProvider>{children}</ThemeProvider>
+      <ThemeProvider>
+        <ToastProvider>{children}</ToastProvider>
+      </ThemeProvider>
     </AuthProvider>
   )
 }

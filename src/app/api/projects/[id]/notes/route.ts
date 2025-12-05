@@ -44,19 +44,21 @@ export async function PATCH(
   }
 
   const body = await req.json()
+  const { note_id, ...updates } = body
 
   const { data, error } = await supabase
     .from('notes')
     .update({
-      ...body,
+      ...updates,
       updated_at: new Date().toISOString(),
     })
-    .eq('id', body.note_id)
+    .eq('id', note_id)
     .eq('user_id', user.id)
     .select()
     .single()
 
   if (error) {
+    console.error('PATCH notes error:', error)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 

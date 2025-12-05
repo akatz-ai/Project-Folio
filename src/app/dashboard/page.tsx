@@ -148,8 +148,16 @@ export default function Dashboard() {
     }
   }
 
-  const handleUpdateProject = (updated: ProjectWithRelations) => {
-    setProjects(projects.map(p => p.id === updated.id ? updated : p))
+  const handleUpdateProject = (updatedOrFn: ProjectWithRelations | ((prev: ProjectWithRelations) => ProjectWithRelations)) => {
+    if (typeof updatedOrFn === 'function') {
+      setProjects(prev => prev.map(p => {
+        // Find project by checking notes/commands for temp IDs to handle optimistic updates
+        const updated = updatedOrFn(p)
+        return updated.id === p.id ? updated : p
+      }))
+    } else {
+      setProjects(prev => prev.map(p => p.id === updatedOrFn.id ? updatedOrFn : p))
+    }
   }
 
   if (authLoading || loading) {

@@ -1,11 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import { ProjectWithRelations, Note, Command, NoteTag } from '@/types/database'
+import { useToast } from './Toast'
 
 interface ProjectCardProps {
   project: ProjectWithRelations
-  onUpdate: (project: ProjectWithRelations) => void
+  onUpdate: (projectOrFn: ProjectWithRelations | ((prev: ProjectWithRelations) => ProjectWithRelations)) => void
   onDelete: (id: string) => void
   onEdit: (project: ProjectWithRelations) => void
 }
@@ -37,14 +38,67 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit }: ProjectCard
   const [activeTab, setActiveTab] = useState<'notes' | 'commands'>('notes')
   const [tagFilter, setTagFilter] = useState<NoteTag | ''>('')
   const [timeFilter, setTimeFilter] = useState('')
+  const { showToast } = useToast()
 
-  const toggleExpand = async () => {
+  // Debounce timers for batching updates
+  const debounceTimers = useRef<Record<string, NodeJS.Timeout>>({})
+  const pendingUpdates = useRef<Record<string, { type: 'note' | 'command', updates: Record<string, unknown> }>>({})
+
+  // Debounced sync function
+  const debouncedSync = useCallback((id: string, type: 'note' | 'command', updates: Record<string, unknown>) => {
+    const key = `${type}-${id}`
+    pendingUpdates.current[key] = {
+      type,
+      updates: { ...pendingUpdates.current[key]?.updates, ...updates },
+    }
+
+    if (debounceTimers.current[key]) {
+      clearTimeout(debounceTimers.current[key])
+    }
+
+    debounceTimers.current[key] = setTimeout(async () => {
+      const pending = pendingUpdates.current[key]
+      if (!pending) return
+
+      delete pendingUpdates.current[key]
+      delete debounceTimers.current[key]
+
+      const endpoint = type === 'note'
+        ? `/api/projects/${project.id}/notes`
+        : `/api/projects/${project.id}/commands`
+
+      const body = type === 'note'
+        ? { note_id: id, ...pending.updates }
+        : { command_id: id, ...pending.updates }
+
+      try {
+        const res = await fetch(endpoint, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+
+        if (!res.ok) {
+          const error = await res.json()
+          showToast(`Failed to save ${type}: ${error.error || 'Unknown error'}`)
+        }
+      } catch {
+        showToast(`Failed to save ${type}: Network error`)
+      }
+    }, 500)
+  }, [project.id, showToast])
+
+  const toggleExpand = () => {
     const newExpanded = !expanded
     setExpanded(newExpanded)
-    await fetch(`/api/projects/${project.id}`, {
+
+    // Fire and forget - don't block UI
+    fetch(`/api/projects/${project.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ is_expanded: newExpanded }),
+    }).catch(() => {
+      showToast('Failed to save expanded state')
     })
   }
 
@@ -59,74 +113,171 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit }: ProjectCard
   }
 
   const addNote = async () => {
-    const res = await fetch(`/api/projects/${project.id}/notes`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    })
-    if (res.ok) {
-      const note = await res.json()
-      onUpdate({ ...project, notes: [...project.notes, note] })
+    // Optimistic: create temporary note immediately
+    const tempId = `temp-${Date.now()}`
+    const tempNote: Note = {
+      id: tempId,
+      project_id: project.id,
+      user_id: '',
+      tag: 'Note',
+      content: '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+    onUpdate({ ...project, notes: [...project.notes, tempNote] })
+
+    try {
+      const res = await fetch(`/api/projects/${project.id}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      if (res.ok) {
+        const note = await res.json()
+        // Replace temp note with real one - use functional update pattern
+        onUpdate(prev => ({
+          ...prev,
+          notes: prev.notes.map(n => n.id === tempId ? note : n),
+        }) as ProjectWithRelations)
+      } else {
+        // Remove temp note on failure
+        onUpdate(prev => ({
+          ...prev,
+          notes: prev.notes.filter(n => n.id !== tempId),
+        }) as ProjectWithRelations)
+        showToast('Failed to create note')
+      }
+    } catch {
+      onUpdate(prev => ({
+        ...prev,
+        notes: prev.notes.filter(n => n.id !== tempId),
+      }) as ProjectWithRelations)
+      showToast('Failed to create note: Network error')
     }
   }
 
-  const updateNote = async (note: Note, updates: Partial<Note>) => {
-    const res = await fetch(`/api/projects/${project.id}/notes`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ note_id: note.id, ...updates }),
+  const updateNote = (note: Note, updates: Partial<Note>) => {
+    // Optimistic update immediately
+    const updatedNote = { ...note, ...updates, updated_at: new Date().toISOString() }
+    onUpdate({
+      ...project,
+      notes: project.notes.map(n => n.id === note.id ? updatedNote : n),
     })
-    if (res.ok) {
-      const updated = await res.json()
-      onUpdate({
-        ...project,
-        notes: project.notes.map(n => n.id === note.id ? updated : n),
-      })
-    }
+
+    // Don't sync temp notes (not yet saved to server)
+    if (note.id.startsWith('temp-')) return
+
+    // Debounced sync to server
+    debouncedSync(note.id, 'note', updates)
   }
 
   const deleteNote = async (noteId: string) => {
-    const res = await fetch(`/api/projects/${project.id}/notes?note_id=${noteId}`, {
-      method: 'DELETE',
-    })
-    if (res.ok) {
+    // For temp notes, just remove from UI
+    if (noteId.startsWith('temp-')) {
       onUpdate({ ...project, notes: project.notes.filter(n => n.id !== noteId) })
+      return
+    }
+
+    // Store for rollback
+    const originalNotes = [...project.notes]
+
+    // Optimistic delete immediately
+    onUpdate({ ...project, notes: project.notes.filter(n => n.id !== noteId) })
+
+    try {
+      const res = await fetch(`/api/projects/${project.id}/notes?note_id=${noteId}`, {
+        method: 'DELETE',
+      })
+      if (!res.ok) {
+        onUpdate({ ...project, notes: originalNotes })
+        showToast('Failed to delete note')
+      }
+    } catch {
+      onUpdate({ ...project, notes: originalNotes })
+      showToast('Failed to delete note: Network error')
     }
   }
 
   const addCommand = async () => {
-    const res = await fetch(`/api/projects/${project.id}/commands`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    })
-    if (res.ok) {
-      const cmd = await res.json()
-      onUpdate({ ...project, commands: [...project.commands, cmd] })
+    // Optimistic: create temporary command immediately
+    const tempId = `temp-${Date.now()}`
+    const tempCmd: Command = {
+      id: tempId,
+      project_id: project.id,
+      user_id: '',
+      command: '',
+      description: '',
+      created_at: new Date().toISOString(),
+    }
+    onUpdate({ ...project, commands: [...project.commands, tempCmd] })
+
+    try {
+      const res = await fetch(`/api/projects/${project.id}/commands`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      if (res.ok) {
+        const cmd = await res.json()
+        onUpdate(prev => ({
+          ...prev,
+          commands: prev.commands.map(c => c.id === tempId ? cmd : c),
+        }) as ProjectWithRelations)
+      } else {
+        onUpdate(prev => ({
+          ...prev,
+          commands: prev.commands.filter(c => c.id !== tempId),
+        }) as ProjectWithRelations)
+        showToast('Failed to create command')
+      }
+    } catch {
+      onUpdate(prev => ({
+        ...prev,
+        commands: prev.commands.filter(c => c.id !== tempId),
+      }) as ProjectWithRelations)
+      showToast('Failed to create command: Network error')
     }
   }
 
-  const updateCommand = async (cmd: Command, updates: Partial<Command>) => {
-    const res = await fetch(`/api/projects/${project.id}/commands`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command_id: cmd.id, ...updates }),
+  const updateCommand = (cmd: Command, updates: Partial<Command>) => {
+    // Optimistic update immediately
+    const updatedCmd = { ...cmd, ...updates }
+    onUpdate({
+      ...project,
+      commands: project.commands.map(c => c.id === cmd.id ? updatedCmd : c),
     })
-    if (res.ok) {
-      const updated = await res.json()
-      onUpdate({
-        ...project,
-        commands: project.commands.map(c => c.id === cmd.id ? updated : c),
-      })
-    }
+
+    // Don't sync temp commands
+    if (cmd.id.startsWith('temp-')) return
+
+    // Debounced sync to server
+    debouncedSync(cmd.id, 'command', updates)
   }
 
   const deleteCommand = async (cmdId: string) => {
-    const res = await fetch(`/api/projects/${project.id}/commands?command_id=${cmdId}`, {
-      method: 'DELETE',
-    })
-    if (res.ok) {
+    // For temp commands, just remove from UI
+    if (cmdId.startsWith('temp-')) {
       onUpdate({ ...project, commands: project.commands.filter(c => c.id !== cmdId) })
+      return
+    }
+
+    // Store for rollback
+    const originalCommands = [...project.commands]
+
+    // Optimistic delete immediately
+    onUpdate({ ...project, commands: project.commands.filter(c => c.id !== cmdId) })
+
+    try {
+      const res = await fetch(`/api/projects/${project.id}/commands?command_id=${cmdId}`, {
+        method: 'DELETE',
+      })
+      if (!res.ok) {
+        onUpdate({ ...project, commands: originalCommands })
+        showToast('Failed to delete command')
+      }
+    } catch {
+      onUpdate({ ...project, commands: originalCommands })
+      showToast('Failed to delete command: Network error')
     }
   }
 
