@@ -19,10 +19,17 @@ export function AIChatSidebar({ projects, onProjectsUpdate }: AIChatSidebarProps
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    if (!loading && isOpen) {
+      setTimeout(() => inputRef.current?.focus(), 0)
+    }
+  }, [loading, isOpen])
 
   const sendMessage = async () => {
     if (!input.trim() || loading) return
@@ -36,7 +43,7 @@ export function AIChatSidebar({ projects, onProjectsUpdate }: AIChatSidebarProps
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMessage, projects }),
+        body: JSON.stringify({ message: userMessage, projects, history: messages }),
       })
 
       if (!res.ok) throw new Error('Failed to send message')
@@ -150,13 +157,24 @@ export function AIChatSidebar({ projects, onProjectsUpdate }: AIChatSidebarProps
             }}
             className="flex gap-2"
           >
-            <input
-              type="text"
+            <textarea
+              ref={inputRef}
               value={input}
-              onChange={e => setInput(e.target.value)}
+              onChange={e => {
+                setInput(e.target.value)
+                e.target.style.height = 'auto'
+                e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px'
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  sendMessage()
+                }
+              }}
               placeholder="Ask anything..."
-              className="form-input flex-1"
+              className="form-input flex-1 resize-none min-h-[38px] max-h-[120px]"
               disabled={loading}
+              rows={1}
             />
             <button
               type="submit"

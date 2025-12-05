@@ -17,6 +17,7 @@ export async function POST(
   const { data, error } = await supabase
     .from('notes')
     .insert({
+      id: body.id, // Client-generated UUID
       project_id: params.id,
       user_id: user.id,
       tag: body.tag || 'Note',

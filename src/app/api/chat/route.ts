@@ -6,13 +6,16 @@ import { ProjectWithRelations, NoteTag } from '@/types/database'
 export const dynamic = 'force-dynamic'
 
 interface AIAction {
-  type: 'add_project' | 'update_project' | 'delete_project' | 'add_note' | 'add_command' | 'search' | 'summarize'
+  type: 'add_project' | 'update_project' | 'delete_project' | 'move_project' | 'add_note' | 'update_note' | 'add_command' | 'search' | 'summarize'
+  position?: number | 'top' | 'bottom'
   title?: string
   description?: string
+  authors?: string[]
   github_url?: string
   local_path?: string
   project_id?: string
   project_name?: string
+  note_id?: string
   tag?: NoteTag
   content?: string
   command?: string
@@ -33,10 +36,12 @@ Parse user requests into structured JSON actions. Always respond with valid JSON
 }
 
 Action types:
-- "add_project": Create a new project. Fields: title (required), description, github_url, local_path
-- "update_project": Update existing project. Fields: project_id OR project_name (for matching), plus fields to update
+- "add_project": Create a new project. Fields: title (required), description, authors (string array), github_url, local_path
+- "update_project": Update existing project. Fields: project_id OR project_name (for matching), plus fields to update (title, description, authors, github_url, local_path)
 - "delete_project": Delete a project. Fields: project_id OR project_name
+- "move_project": Reorder a project. Fields: project_id OR project_name, position (number 1-based, or "top"/"bottom")
 - "add_note": Add a note to a project. Fields: project_id OR project_name, tag (Note/Bug/Feature/Idea), content
+- "update_note": Update an existing note. Fields: note_id (required), tag, content (at least one)
 - "add_command": Add a quick command. Fields: project_id OR project_name, command, description
 - "search": Search projects/notes. Fields: query
 - "summarize": Get summary of all projects. No fields needed.
@@ -48,6 +53,7 @@ Rules:
 4. Keep responses brief and helpful
 5. If you can't understand the request, return empty actions with a helpful response
 6. Always maintain valid JSON format with double quotes
+7. For delete_project: NEVER delete immediately. Return empty actions and ask "Are you sure you want to delete [project name]?" Only delete if user confirms with "yes", "confirm", "do it", etc.
 
 Current projects context will be provided.`
 
@@ -67,29 +73,35 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { message, projects } = await req.json()
+    const { message, projects, history = [] } = await req.json()
 
     const anthropic = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
     })
 
-    // Build context
+    // Build context with note details
     const projectContext = projects.length > 0
-      ? `Current projects:\n${projects.map((p: ProjectWithRelations) =>
-          `- "${p.title}" (id: ${p.id}): ${p.description || 'No description'} | ${p.notes.length} notes, ${p.commands.length} commands`
-        ).join('\n')}`
+      ? `Current projects:\n${projects.map((p: ProjectWithRelations) => {
+          const authors = p.authors?.length ? ` | Authors: ${p.authors.join(', ')}` : ''
+          const notesList = p.notes.length > 0
+            ? `\n  Notes: ${p.notes.map(n => `[${n.id}] ${n.tag}: "${n.content.slice(0, 50)}${n.content.length > 50 ? '...' : ''}"`).join(', ')}`
+            : ''
+          return `- "${p.title}" (id: ${p.id}): ${p.description || 'No description'}${authors}${notesList}`
+        }).join('\n')}`
       : 'No projects yet.'
+
+    // Build conversation history
+    const conversationMessages: Array<{role: 'user' | 'assistant', content: string}> = []
+    for (const msg of history.slice(-10)) { // Keep last 10 messages for context
+      conversationMessages.push({ role: msg.role, content: msg.content })
+    }
+    conversationMessages.push({ role: 'user', content: `${projectContext}\n\nUser says: "${message}"` })
 
     const response = await anthropic.messages.create({
       model: 'claude-3-5-haiku-20241022',
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
-      messages: [
-        {
-          role: 'user',
-          content: `${projectContext}\n\nUser says: "${message}"`,
-        },
-      ],
+      messages: conversationMessages,
     })
 
     const textContent = response.content.find((c) => c.type === 'text')
@@ -135,6 +147,7 @@ export async function POST(req: NextRequest) {
             user_id: user.id,
             title: action.title,
             description: action.description || null,
+            authors: action.authors || [],
             github_url: action.github_url || null,
             local_path: action.local_path || null,
           })
@@ -150,6 +163,7 @@ export async function POST(req: NextRequest) {
           const updates: Record<string, unknown> = {}
           if (action.title) updates.title = action.title
           if (action.description) updates.description = action.description
+          if (action.authors) updates.authors = action.authors
           if (action.github_url) updates.github_url = action.github_url
           if (action.local_path) updates.local_path = action.local_path
 
@@ -172,6 +186,34 @@ export async function POST(req: NextRequest) {
           await supabase.from('projects').delete().eq('id', project.id)
           updatedProjects = updatedProjects.filter(p => p.id !== project.id)
         }
+      } else if (action.type === 'move_project') {
+        const project = findProject()
+        if (project && action.position !== undefined) {
+          const currentIndex = updatedProjects.findIndex(p => p.id === project.id)
+          if (currentIndex !== -1) {
+            let targetIndex: number
+            if (action.position === 'top') {
+              targetIndex = 0
+            } else if (action.position === 'bottom') {
+              targetIndex = updatedProjects.length - 1
+            } else {
+              targetIndex = Math.max(0, Math.min(action.position - 1, updatedProjects.length - 1))
+            }
+
+            // Reorder locally
+            const newProjects = [...updatedProjects]
+            const [removed] = newProjects.splice(currentIndex, 1)
+            newProjects.splice(targetIndex, 0, removed)
+            updatedProjects = newProjects
+
+            // Save to server
+            const orderedIds = newProjects.map(p => p.id)
+            const updates = orderedIds.map((id: string, index: number) =>
+              supabase.from('projects').update({ sort_order: index }).eq('id', id).eq('user_id', user.id)
+            )
+            await Promise.all(updates)
+          }
+        }
       } else if (action.type === 'add_note') {
         const project = findProject()
         if (project) {
@@ -192,6 +234,26 @@ export async function POST(req: NextRequest) {
                 ? { ...p, notes: [...p.notes, data] }
                 : p
             )
+          }
+        }
+      } else if (action.type === 'update_note' && action.note_id) {
+        const updates: Record<string, unknown> = {}
+        if (action.tag) updates.tag = action.tag
+        if (action.content) updates.content = action.content
+
+        if (Object.keys(updates).length > 0) {
+          const { data, error } = await supabase
+            .from('notes')
+            .update({ ...updates, updated_at: new Date().toISOString() })
+            .eq('id', action.note_id)
+            .select()
+            .single()
+
+          if (!error && data) {
+            updatedProjects = updatedProjects.map(p => ({
+              ...p,
+              notes: p.notes.map(n => n.id === action.note_id ? data : n)
+            }))
           }
         }
       } else if (action.type === 'add_command') {

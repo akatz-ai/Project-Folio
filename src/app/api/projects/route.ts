@@ -17,6 +17,7 @@ export async function GET() {
       commands (*)
     `)
     .eq('user_id', user.id)
+    .order('sort_order', { ascending: true })
     .order('created_at', { ascending: false })
 
   if (error) {
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json()
 
-  const { data, error } = await supabase
+  const { data: project, error } = await supabase
     .from('projects')
     .insert({
       user_id: user.id,
@@ -48,13 +49,23 @@ export async function POST(req: NextRequest) {
       path_type: body.path_type || 'wsl',
       wsl_distro: body.wsl_distro || 'Ubuntu',
       is_expanded: false,
+      sort_order: 0,
     })
-    .select(`*, notes (*), commands (*)`)
+    .select()
     .single()
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  return NextResponse.json(data)
+  // Create default empty note and command
+  const [noteResult, commandResult] = await Promise.all([
+    supabase.from('notes').insert({ project_id: project.id, user_id: user.id, tag: 'Note', content: '' }).select(),
+    supabase.from('commands').insert({ project_id: project.id, user_id: user.id, command: '', description: '' }).select(),
+  ])
+
+  if (noteResult.error) console.error('Note insert error:', noteResult.error)
+  if (commandResult.error) console.error('Command insert error:', commandResult.error)
+
+  return NextResponse.json({ ...project, notes: noteResult.data || [], commands: commandResult.data || [] })
 }

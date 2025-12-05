@@ -17,6 +17,7 @@ export default function Dashboard() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editingProject, setEditingProject] = useState<ProjectWithRelations | null>(null)
   const [showMigration, setShowMigration] = useState(false)
+  const [draggingId, setDraggingId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -160,6 +161,43 @@ export default function Dashboard() {
     }
   }
 
+  const handleDragStart = (e: React.DragEvent, id: string) => {
+    setDraggingId(id)
+    e.dataTransfer.effectAllowed = 'move'
+  }
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+  }
+
+  const handleDrop = async (e: React.DragEvent, targetId: string) => {
+    e.preventDefault()
+    if (!draggingId || draggingId === targetId) {
+      setDraggingId(null)
+      return
+    }
+
+    const dragIndex = projects.findIndex(p => p.id === draggingId)
+    const targetIndex = projects.findIndex(p => p.id === targetId)
+    if (dragIndex === -1 || targetIndex === -1) return
+
+    // Reorder locally
+    const newProjects = [...projects]
+    const [removed] = newProjects.splice(dragIndex, 1)
+    newProjects.splice(targetIndex, 0, removed)
+    setProjects(newProjects)
+    setDraggingId(null)
+
+    // Save to server
+    const orderedIds = newProjects.map(p => p.id)
+    await fetch('/api/projects/reorder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderedIds }),
+    })
+  }
+
   if (authLoading || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -210,6 +248,10 @@ export default function Dashboard() {
                   setEditingProject(p)
                   setModalOpen(true)
                 }}
+                onDragStart={handleDragStart}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+                isDragging={draggingId === project.id}
               />
             ))
           )}

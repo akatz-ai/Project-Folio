@@ -20,6 +20,7 @@ export interface Project {
   path_type: PathType
   wsl_distro: string
   is_expanded: boolean
+  sort_order: number
   created_at: string
   updated_at: string
 }

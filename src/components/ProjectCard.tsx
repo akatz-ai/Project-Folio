@@ -1,14 +1,43 @@
 'use client'
 
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, memo } from 'react'
 import { ProjectWithRelations, Note, Command, NoteTag } from '@/types/database'
 import { useToast } from './Toast'
+
+// Isolated input that manages its own state - parent re-renders won't affect it
+const IsolatedInput = memo(function IsolatedInput({
+  initialValue,
+  placeholder,
+  className,
+  onSave,
+}: {
+  initialValue: string
+  placeholder: string
+  className: string
+  onSave: (value: string) => void
+}) {
+  const [value, setValue] = useState(initialValue)
+  return (
+    <input
+      type="text"
+      value={value}
+      placeholder={placeholder}
+      className={className}
+      onChange={e => setValue(e.target.value)}
+      onBlur={() => onSave(value)}
+    />
+  )
+})
 
 interface ProjectCardProps {
   project: ProjectWithRelations
   onUpdate: (projectOrFn: ProjectWithRelations | ((prev: ProjectWithRelations) => ProjectWithRelations)) => void
   onDelete: (id: string) => void
   onEdit: (project: ProjectWithRelations) => void
+  onDragStart: (e: React.DragEvent, id: string) => void
+  onDragOver: (e: React.DragEvent) => void
+  onDrop: (e: React.DragEvent, id: string) => void
+  isDragging?: boolean
 }
 
 function formatDate(dateStr: string) {
@@ -33,27 +62,7 @@ function getTimePeriod(dateStr: string) {
   return 'older'
 }
 
-const CMD_MIN_WIDTH = 120
-const CMD_MAX_WIDTH = 400
-
-function resizeCommandInput(el: HTMLElement) {
-  // Temporarily remove width constraint to measure natural content width
-  el.style.width = 'auto'
-  el.style.whiteSpace = 'nowrap'
-  const naturalWidth = Math.max(el.scrollWidth, CMD_MIN_WIDTH)
-
-  if (naturalWidth <= CMD_MAX_WIDTH) {
-    // Content fits - size to content (with min)
-    el.style.width = `${naturalWidth}px`
-    el.style.whiteSpace = 'nowrap'
-  } else {
-    // Content exceeds max - cap width and allow wrapping
-    el.style.width = `${CMD_MAX_WIDTH}px`
-    el.style.whiteSpace = 'pre-wrap'
-  }
-}
-
-export function ProjectCard({ project, onUpdate, onDelete, onEdit }: ProjectCardProps) {
+export function ProjectCard({ project, onUpdate, onDelete, onEdit, onDragStart, onDragOver, onDrop, isDragging }: ProjectCardProps) {
   const [expanded, setExpanded] = useState(project.is_expanded)
   const [activeTab, setActiveTab] = useState<'notes' | 'commands'>('notes')
   const [tagFilter, setTagFilter] = useState<NoteTag | ''>('')
@@ -132,11 +141,11 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit }: ProjectCard
     window.open(uri, '_blank')
   }
 
-  const addNote = async () => {
-    // Optimistic: create temporary note immediately
-    const tempId = `temp-${Date.now()}`
-    const tempNote: Note = {
-      id: tempId,
+  const addNote = () => {
+    // Generate real UUID client-side - no server round-trip needed for UI
+    const id = crypto.randomUUID()
+    const newNote: Note = {
+      id,
       project_id: project.id,
       user_id: '',
       tag: 'Note',
@@ -144,161 +153,65 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit }: ProjectCard
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }
-    onUpdate({ ...project, notes: [...project.notes, tempNote] })
+    onUpdate({ ...project, notes: [...project.notes, newNote] })
 
-    try {
-      const res = await fetch(`/api/projects/${project.id}/notes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      })
-      if (res.ok) {
-        const note = await res.json()
-        // Replace temp note with real one - use functional update pattern
-        onUpdate(prev => ({
-          ...prev,
-          notes: prev.notes.map(n => n.id === tempId ? note : n),
-        }) as ProjectWithRelations)
-      } else {
-        // Remove temp note on failure
-        onUpdate(prev => ({
-          ...prev,
-          notes: prev.notes.filter(n => n.id !== tempId),
-        }) as ProjectWithRelations)
-        showToast('Failed to create note')
-      }
-    } catch {
-      onUpdate(prev => ({
-        ...prev,
-        notes: prev.notes.filter(n => n.id !== tempId),
-      }) as ProjectWithRelations)
-      showToast('Failed to create note: Network error')
-    }
+    // Fire and forget - sync to server in background, don't update UI on response
+    fetch(`/api/projects/${project.id}/notes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, tag: 'Note', content: '' }),
+    }).catch(() => showToast('Failed to sync note to server'))
   }
 
   const updateNote = (note: Note, updates: Partial<Note>) => {
-    // Optimistic update immediately
-    const updatedNote = { ...note, ...updates, updated_at: new Date().toISOString() }
-    onUpdate({
-      ...project,
-      notes: project.notes.map(n => n.id === note.id ? updatedNote : n),
-    })
-
-    // Don't sync temp notes (not yet saved to server)
-    if (note.id.startsWith('temp-')) return
-
-    // Debounced sync to server
+    // Sync to server only - UI already shows what user typed
     debouncedSync(note.id, 'note', updates)
   }
 
-  const deleteNote = async (noteId: string) => {
-    // For temp notes, just remove from UI
-    if (noteId.startsWith('temp-')) {
-      onUpdate({ ...project, notes: project.notes.filter(n => n.id !== noteId) })
-      return
-    }
-
-    // Store for rollback
-    const originalNotes = [...project.notes]
-
-    // Optimistic delete immediately
+  const deleteNote = (noteId: string) => {
+    // Update UI immediately
     onUpdate({ ...project, notes: project.notes.filter(n => n.id !== noteId) })
 
-    try {
-      const res = await fetch(`/api/projects/${project.id}/notes?note_id=${noteId}`, {
-        method: 'DELETE',
-      })
-      if (!res.ok) {
-        onUpdate({ ...project, notes: originalNotes })
-        showToast('Failed to delete note')
-      }
-    } catch {
-      onUpdate({ ...project, notes: originalNotes })
-      showToast('Failed to delete note: Network error')
-    }
+    // Fire and forget - sync to server in background
+    fetch(`/api/projects/${project.id}/notes?note_id=${noteId}`, {
+      method: 'DELETE',
+    }).catch(() => showToast('Failed to sync delete to server'))
   }
 
-  const addCommand = async () => {
-    // Optimistic: create temporary command immediately
-    const tempId = `temp-${Date.now()}`
-    const tempCmd: Command = {
-      id: tempId,
+  const addCommand = () => {
+    // Generate real UUID client-side - no server round-trip needed for UI
+    const id = crypto.randomUUID()
+    const newCmd: Command = {
+      id,
       project_id: project.id,
       user_id: '',
       command: '',
       description: '',
       created_at: new Date().toISOString(),
     }
-    onUpdate({ ...project, commands: [...project.commands, tempCmd] })
+    onUpdate({ ...project, commands: [...project.commands, newCmd] })
 
-    try {
-      const res = await fetch(`/api/projects/${project.id}/commands`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      })
-      if (res.ok) {
-        const cmd = await res.json()
-        onUpdate(prev => ({
-          ...prev,
-          commands: prev.commands.map(c => c.id === tempId ? cmd : c),
-        }) as ProjectWithRelations)
-      } else {
-        onUpdate(prev => ({
-          ...prev,
-          commands: prev.commands.filter(c => c.id !== tempId),
-        }) as ProjectWithRelations)
-        showToast('Failed to create command')
-      }
-    } catch {
-      onUpdate(prev => ({
-        ...prev,
-        commands: prev.commands.filter(c => c.id !== tempId),
-      }) as ProjectWithRelations)
-      showToast('Failed to create command: Network error')
-    }
+    // Fire and forget - sync to server in background
+    fetch(`/api/projects/${project.id}/commands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, command: '', description: '' }),
+    }).catch(() => showToast('Failed to sync command to server'))
   }
 
   const updateCommand = (cmd: Command, updates: Partial<Command>) => {
-    // Optimistic update immediately
-    const updatedCmd = { ...cmd, ...updates }
-    onUpdate({
-      ...project,
-      commands: project.commands.map(c => c.id === cmd.id ? updatedCmd : c),
-    })
-
-    // Don't sync temp commands
-    if (cmd.id.startsWith('temp-')) return
-
-    // Debounced sync to server
+    // Sync to server only - UI already shows what user typed
     debouncedSync(cmd.id, 'command', updates)
   }
 
-  const deleteCommand = async (cmdId: string) => {
-    // For temp commands, just remove from UI
-    if (cmdId.startsWith('temp-')) {
-      onUpdate({ ...project, commands: project.commands.filter(c => c.id !== cmdId) })
-      return
-    }
-
-    // Store for rollback
-    const originalCommands = [...project.commands]
-
-    // Optimistic delete immediately
+  const deleteCommand = (cmdId: string) => {
+    // Update UI immediately
     onUpdate({ ...project, commands: project.commands.filter(c => c.id !== cmdId) })
 
-    try {
-      const res = await fetch(`/api/projects/${project.id}/commands?command_id=${cmdId}`, {
-        method: 'DELETE',
-      })
-      if (!res.ok) {
-        onUpdate({ ...project, commands: originalCommands })
-        showToast('Failed to delete command')
-      }
-    } catch {
-      onUpdate({ ...project, commands: originalCommands })
-      showToast('Failed to delete command: Network error')
-    }
+    // Fire and forget - sync to server in background
+    fetch(`/api/projects/${project.id}/commands?command_id=${cmdId}`, {
+      method: 'DELETE',
+    }).catch(() => showToast('Failed to sync delete to server'))
   }
 
   const copyCommand = async (text: string) => {
@@ -312,7 +225,11 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit }: ProjectCard
   })
 
   return (
-    <article className="bg-bg-secondary border border-border-light rounded-lg shadow-sm overflow-hidden hover:shadow-md transition-shadow">
+    <article
+      className={`bg-bg-secondary border border-border-light rounded-lg shadow-sm overflow-hidden hover:shadow-md transition-shadow ${isDragging ? 'opacity-50' : ''}`}
+      onDragOver={onDragOver}
+      onDrop={e => onDrop(e, project.id)}
+    >
       <div
         className="flex items-start gap-3 p-4 cursor-pointer"
         onClick={toggleExpand}
@@ -384,6 +301,24 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit }: ProjectCard
               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
             </svg>
           </button>
+          <div
+            draggable
+            onDragStart={e => onDragStart(e, project.id)}
+            className="icon-btn cursor-grab active:cursor-grabbing ml-1"
+            title="Drag to reorder"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <circle cx="5" cy="5" r="2"/>
+              <circle cx="12" cy="5" r="2"/>
+              <circle cx="19" cy="5" r="2"/>
+              <circle cx="5" cy="12" r="2"/>
+              <circle cx="12" cy="12" r="2"/>
+              <circle cx="19" cy="12" r="2"/>
+              <circle cx="5" cy="19" r="2"/>
+              <circle cx="12" cy="19" r="2"/>
+              <circle cx="19" cy="19" r="2"/>
+            </svg>
+          </div>
         </div>
       </div>
 
@@ -474,14 +409,13 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit }: ProjectCard
                           {formatDate(note.created_at)}
                         </td>
                         <td className="py-2 px-2">
-                          <div
-                            contentEditable
-                            suppressContentEditableWarning
-                            className="outline-none px-2 py-1 rounded border border-border-light hover:bg-bg-secondary focus:bg-bg-secondary focus:ring-2 focus:ring-accent-primary"
-                            onBlur={e => updateNote(note, { content: e.currentTarget.textContent || '' })}
-                          >
-                            {note.content}
-                          </div>
+                          <IsolatedInput
+                            key={note.id}
+                            initialValue={note.content || ''}
+                            placeholder="Add a note..."
+                            className="w-full outline-none px-2 py-1 rounded border border-border-light bg-transparent hover:bg-bg-secondary focus:bg-bg-secondary focus:ring-2 focus:ring-accent-primary"
+                            onSave={value => updateNote(note, { content: value })}
+                          />
                         </td>
                         <td className="py-2">
                           <button
@@ -522,20 +456,16 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit }: ProjectCard
                       <tr key={cmd.id} className="border-t border-border-light group">
                         <td className="py-2 px-2 align-top">
                           <div className="relative inline-block align-top">
-                            <code
-                              ref={el => el && resizeCommandInput(el)}
-                              contentEditable
-                              suppressContentEditableWarning
-                              className="block font-mono text-xs bg-bg-tertiary px-2 py-1.5 pr-8 rounded outline-none focus:ring-2 focus:ring-accent-primary"
-                              style={{ overflowWrap: 'anywhere' }}
-                              onInput={e => resizeCommandInput(e.currentTarget)}
-                              onBlur={e => updateCommand(cmd, { command: e.currentTarget.textContent || '' })}
-                            >
-                              {cmd.command}
-                            </code>
+                            <IsolatedInput
+                              key={cmd.id}
+                              initialValue={cmd.command || ''}
+                              placeholder="npm run dev"
+                              className="font-mono text-xs bg-bg-tertiary px-2 py-1.5 pr-8 rounded outline-none focus:ring-2 focus:ring-accent-primary min-w-[120px]"
+                              onSave={value => updateCommand(cmd, { command: value })}
+                            />
                             <button
                               onClick={() => copyCommand(cmd.command || '')}
-                              className="absolute right-1 top-1 opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-text-primary transition-opacity"
+                              className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-text-primary transition-opacity"
                             >
                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -545,14 +475,13 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit }: ProjectCard
                           </div>
                         </td>
                         <td className="py-2 px-2 w-full">
-                          <div
-                            contentEditable
-                            suppressContentEditableWarning
-                            className="outline-none px-2 py-1 rounded border border-border-light hover:bg-bg-secondary focus:bg-bg-secondary focus:ring-2 focus:ring-accent-primary"
-                            onBlur={e => updateCommand(cmd, { description: e.currentTarget.textContent || '' })}
-                          >
-                            {cmd.description}
-                          </div>
+                          <IsolatedInput
+                            key={`${cmd.id}-desc`}
+                            initialValue={cmd.description || ''}
+                            placeholder="Add description..."
+                            className="w-full outline-none px-2 py-1 rounded border border-border-light bg-transparent hover:bg-bg-secondary focus:bg-bg-secondary focus:ring-2 focus:ring-accent-primary"
+                            onSave={value => updateCommand(cmd, { description: value })}
+                          />
                         </td>
                         <td className="py-2">
                           <button
