@@ -521,7 +521,8 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit, onDragStart, 
                   </select>
                 </div>
 
-                <table className="w-full text-sm">
+                {/* Desktop table layout */}
+                <table className="hidden sm:table w-full text-sm">
                   <thead>
                     <tr className="text-left text-xs uppercase tracking-wide text-text-muted">
                       <th className="w-24 pb-2 px-2">Tag</th>
@@ -576,6 +577,50 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit, onDragStart, 
                   </tbody>
                 </table>
 
+                {/* Mobile card layout */}
+                <div className="sm:hidden space-y-3">
+                  {filteredNotes.map(note => (
+                    <div key={note.id} className="border border-border-light rounded-lg p-3 group">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-3">
+                          <select
+                            value={note.tag}
+                            onChange={e => updateNote(note, { tag: e.target.value as NoteTag })}
+                            className={`tag cursor-pointer ${
+                              note.tag === 'Note' ? 'tag-note' :
+                              note.tag === 'Bug' ? 'tag-bug' :
+                              note.tag === 'Feature' ? 'tag-feature' : 'tag-idea'
+                            }`}
+                          >
+                            <option value="Note">Note</option>
+                            <option value="Bug">Bug</option>
+                            <option value="Feature">Feature</option>
+                            <option value="Idea">Idea</option>
+                          </select>
+                          <span className="text-xs text-text-muted font-mono">
+                            {formatDate(note.created_at)}
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => deleteNote(note.id)}
+                          className="p-1 text-text-muted hover:text-accent-bug transition-opacity"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M18 6L6 18M6 6l12 12"/>
+                          </svg>
+                        </button>
+                      </div>
+                      <IsolatedTextarea
+                        key={note.id}
+                        initialValue={note.content || ''}
+                        placeholder="Add a note..."
+                        className="w-full outline-none px-2 py-1 rounded border border-border-light bg-transparent hover:bg-bg-secondary focus:bg-bg-secondary focus:ring-2 focus:ring-accent-primary text-sm"
+                        onSave={value => updateNote(note, { content: value })}
+                      />
+                    </div>
+                  ))}
+                </div>
+
                 <button onClick={addNote} className="flex items-center gap-1.5 text-xs text-text-muted hover:text-accent-primary mt-3 px-3 py-2 border border-dashed border-border rounded hover:border-accent-primary transition-colors">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M12 5v14M5 12h14"/>
@@ -587,7 +632,8 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit, onDragStart, 
 
             {activeTab === 'commands' && (
               <>
-                <table className="w-full text-sm">
+                {/* Desktop table layout */}
+                <table className="hidden sm:table w-full text-sm">
                   <thead>
                     <tr className="text-left text-xs uppercase tracking-wide text-text-muted">
                       <th className="pb-2 px-2">Command</th>
@@ -641,6 +687,49 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit, onDragStart, 
                     ))}
                   </tbody>
                 </table>
+
+                {/* Mobile card layout */}
+                <div className="sm:hidden space-y-3">
+                  {project.commands.map(cmd => (
+                    <div key={cmd.id} className="border border-border-light rounded-lg p-3 group">
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <div className="relative flex-1 min-w-0">
+                          <IsolatedCommandInput
+                            key={cmd.id}
+                            initialValue={cmd.command || ''}
+                            placeholder="npm run dev"
+                            className="font-mono text-xs bg-bg-tertiary px-2 py-1.5 pr-8 rounded outline-none focus:ring-2 focus:ring-accent-primary w-full"
+                            onSave={value => updateCommand(cmd, { command: value })}
+                          />
+                          <button
+                            onClick={() => copyCommand(cmd.command || '')}
+                            className="absolute right-1 top-1 p-1 text-text-muted hover:text-text-primary transition-opacity"
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                            </svg>
+                          </button>
+                        </div>
+                        <button
+                          onClick={() => deleteCommand(cmd.id)}
+                          className="p-1 text-text-muted hover:text-accent-bug transition-opacity flex-shrink-0"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M18 6L6 18M6 6l12 12"/>
+                          </svg>
+                        </button>
+                      </div>
+                      <IsolatedInput
+                        key={`${cmd.id}-desc`}
+                        initialValue={cmd.description || ''}
+                        placeholder="Add description..."
+                        className="w-full outline-none px-2 py-1 rounded border border-border-light bg-transparent hover:bg-bg-secondary focus:bg-bg-secondary focus:ring-2 focus:ring-accent-primary text-sm"
+                        onSave={value => updateCommand(cmd, { description: value })}
+                      />
+                    </div>
+                  ))}
+                </div>
 
                 <button onClick={addCommand} className="flex items-center gap-1.5 text-xs text-text-muted hover:text-accent-primary mt-3 px-3 py-2 border border-dashed border-border rounded hover:border-accent-primary transition-colors">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
