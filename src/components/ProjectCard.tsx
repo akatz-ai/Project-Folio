@@ -720,7 +720,7 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit, onDragStart, 
                           </svg>
                         </button>
                       </div>
-                      <IsolatedInput
+                      <IsolatedTextarea
                         key={`${cmd.id}-desc`}
                         initialValue={cmd.description || ''}
                         placeholder="Add description..."
