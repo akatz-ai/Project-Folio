@@ -1,5 +1,5 @@
 export type NoteTag = 'Note' | 'Bug' | 'Feature' | 'Idea'
-export type PathType = 'wsl' | 'windows'
+export type PathType = 'wsl' | 'windows' | 'linux'
 export type LinkType = 'url' | 'vscode' | 'directory'
 
 export interface Profile {

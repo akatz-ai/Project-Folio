@@ -102,8 +102,9 @@ export function LinkEditModal({ link, onSave, onClose }: LinkEditModalProps) {
                   onChange={e => setPathType(e.target.value as PathType)}
                   className="w-full px-3 py-2 border border-border rounded bg-bg-primary focus:ring-2 focus:ring-accent-primary outline-none"
                 >
-                  <option value="wsl">WSL (Linux)</option>
+                  <option value="wsl">WSL</option>
                   <option value="windows">Windows</option>
+                  <option value="linux">Linux</option>
                 </select>
               </div>
 
@@ -122,14 +123,14 @@ export function LinkEditModal({ link, onSave, onClose }: LinkEditModalProps) {
 
               <div>
                 <label className="block text-sm text-text-muted mb-1">
-                  Path {pathType === 'wsl' ? '(e.g., /home/user/project)' : '(e.g., C:\\Users\\user\\project)'}
+                  Path {pathType === 'windows' ? '(e.g., C:\\Users\\user\\project)' : '(e.g., /home/user/project)'}
                 </label>
                 <input
                   type="text"
                   value={path}
                   onChange={e => setPath(e.target.value)}
                   className="w-full px-3 py-2 border border-border rounded bg-bg-primary focus:ring-2 focus:ring-accent-primary outline-none"
-                  placeholder={pathType === 'wsl' ? '/home/user/project' : 'C:\\Users\\user\\project'}
+                  placeholder={pathType === 'windows' ? 'C:\\Users\\user\\project' : '/home/user/project'}
                 />
               </div>
             </>

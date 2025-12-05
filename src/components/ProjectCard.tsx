@@ -371,18 +371,20 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit, onDragStart, 
       let uri = ''
       if (link.path_type === 'wsl') {
         uri = `vscode://vscode-remote/wsl+${link.wsl_distro}${link.path}?windowId=_blank`
+      } else if (link.path_type === 'linux') {
+        uri = `vscode://file${link.path}?windowId=_blank`
       } else {
         uri = `vscode://file/${link.path.replace(/\\/g, '/')}?windowId=_blank`
       }
       window.open(uri, '_blank')
     } else if (link.link_type === 'directory' && link.path) {
-      // Browsers block file:// URLs, so copy path for user to paste in Explorer
+      // Browsers block file:// URLs, so copy path for user to paste in file manager
       let pathToCopy = link.path
       if (link.path_type === 'wsl') {
         pathToCopy = `\\\\wsl$\\${link.wsl_distro}${link.path.replace(/\//g, '\\')}`
       }
       navigator.clipboard.writeText(pathToCopy)
-      showToast('Path copied - paste in Explorer address bar', 'success')
+      showToast('Path copied - paste in file manager', 'success')
     }
   }
 
