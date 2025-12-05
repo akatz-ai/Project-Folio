@@ -33,6 +33,26 @@ function getTimePeriod(dateStr: string) {
   return 'older'
 }
 
+const CMD_MIN_WIDTH = 120
+const CMD_MAX_WIDTH = 400
+
+function resizeCommandInput(el: HTMLElement) {
+  // Temporarily remove width constraint to measure natural content width
+  el.style.width = 'auto'
+  el.style.whiteSpace = 'nowrap'
+  const naturalWidth = Math.max(el.scrollWidth, CMD_MIN_WIDTH)
+
+  if (naturalWidth <= CMD_MAX_WIDTH) {
+    // Content fits - size to content (with min)
+    el.style.width = `${naturalWidth}px`
+    el.style.whiteSpace = 'nowrap'
+  } else {
+    // Content exceeds max - cap width and allow wrapping
+    el.style.width = `${CMD_MAX_WIDTH}px`
+    el.style.whiteSpace = 'pre-wrap'
+  }
+}
+
 export function ProjectCard({ project, onUpdate, onDelete, onEdit }: ProjectCardProps) {
   const [expanded, setExpanded] = useState(project.is_expanded)
   const [activeTab, setActiveTab] = useState<'notes' | 'commands'>('notes')
@@ -457,7 +477,7 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit }: ProjectCard
                           <div
                             contentEditable
                             suppressContentEditableWarning
-                            className="outline-none px-1 -mx-1 rounded hover:bg-bg-secondary focus:bg-bg-secondary focus:ring-2 focus:ring-accent-primary"
+                            className="outline-none px-2 py-1 rounded border border-border-light hover:bg-bg-secondary focus:bg-bg-secondary focus:ring-2 focus:ring-accent-primary"
                             onBlur={e => updateNote(note, { content: e.currentTarget.textContent || '' })}
                           >
                             {note.content}
@@ -500,19 +520,22 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit }: ProjectCard
                   <tbody>
                     {project.commands.map(cmd => (
                       <tr key={cmd.id} className="border-t border-border-light group">
-                        <td className="py-2 px-2">
-                          <div className="relative">
+                        <td className="py-2 px-2 align-top">
+                          <div className="relative inline-block align-top">
                             <code
+                              ref={el => el && resizeCommandInput(el)}
                               contentEditable
                               suppressContentEditableWarning
                               className="block font-mono text-xs bg-bg-tertiary px-2 py-1.5 pr-8 rounded outline-none focus:ring-2 focus:ring-accent-primary"
+                              style={{ overflowWrap: 'anywhere' }}
+                              onInput={e => resizeCommandInput(e.currentTarget)}
                               onBlur={e => updateCommand(cmd, { command: e.currentTarget.textContent || '' })}
                             >
                               {cmd.command}
                             </code>
                             <button
                               onClick={() => copyCommand(cmd.command || '')}
-                              className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-text-primary transition-opacity"
+                              className="absolute right-1 top-1 opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-text-primary transition-opacity"
                             >
                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -525,7 +548,7 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit }: ProjectCard
                           <div
                             contentEditable
                             suppressContentEditableWarning
-                            className="outline-none px-1 -mx-1 rounded hover:bg-bg-secondary focus:bg-bg-secondary focus:ring-2 focus:ring-accent-primary"
+                            className="outline-none px-2 py-1 rounded border border-border-light hover:bg-bg-secondary focus:bg-bg-secondary focus:ring-2 focus:ring-accent-primary"
                             onBlur={e => updateCommand(cmd, { description: e.currentTarget.textContent || '' })}
                           >
                             {cmd.description}
