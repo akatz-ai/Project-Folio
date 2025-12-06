@@ -57,26 +57,79 @@ const IsolatedCommandInput = memo(function IsolatedCommandInput({
 }) {
   const [value, setValue] = useState(initialValue)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const measureRef = useRef<HTMLSpanElement>(null)
 
-  // Auto-resize: single line up to max width, then wrap
+  // Auto-resize: measure text width with hidden span, then set textarea size
   useEffect(() => {
     const textarea = textareaRef.current
-    if (textarea) {
-      // Reset to measure natural size
-      textarea.style.height = 'auto'
-      textarea.style.width = 'auto'
-
-      const naturalWidth = textarea.scrollWidth
+    const measure = measureRef.current
+    if (textarea && measure) {
       const minWidth = 120
       const maxWidth = 400
 
-      if (naturalWidth <= maxWidth) {
-        textarea.style.width = `${Math.max(naturalWidth, minWidth)}px`
-      } else {
-        textarea.style.width = `${maxWidth}px`
-      }
+      // Measure the actual text width using the hidden span
+      measure.textContent = value || placeholder
+      const textWidth = measure.offsetWidth + 16 // Add padding for cursor space
 
-      // Now set height based on content
+      // Clamp width between min and max
+      const newWidth = Math.max(minWidth, Math.min(textWidth, maxWidth))
+      textarea.style.width = `${newWidth}px`
+
+      // Set height based on content (for wrapped text)
+      textarea.style.height = 'auto'
+      textarea.style.height = `${textarea.scrollHeight}px`
+    }
+  }, [value, placeholder])
+
+  return (
+    <div className="relative inline-block">
+      {/* Hidden span for measuring text width */}
+      <span
+        ref={measureRef}
+        className={className}
+        style={{
+          position: 'absolute',
+          visibility: 'hidden',
+          whiteSpace: 'pre',
+          height: 0,
+          overflow: 'hidden',
+        }}
+        aria-hidden="true"
+      />
+      <textarea
+        ref={textareaRef}
+        value={value}
+        placeholder={placeholder}
+        className={className}
+        rows={1}
+        onChange={e => setValue(e.target.value)}
+        onBlur={() => onSave(value)}
+        style={{ resize: 'none', overflow: 'hidden', minWidth: 120 }}
+      />
+    </div>
+  )
+})
+
+// Auto-growing textarea for descriptions
+const IsolatedInput = memo(function IsolatedInput({
+  initialValue,
+  placeholder,
+  className,
+  onSave,
+}: {
+  initialValue: string
+  placeholder: string
+  className: string
+  onSave: (value: string) => void
+}) {
+  const [value, setValue] = useState(initialValue)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Auto-resize textarea to fit content
+  useEffect(() => {
+    const textarea = textareaRef.current
+    if (textarea) {
+      textarea.style.height = 'auto'
       textarea.style.height = `${textarea.scrollHeight}px`
     }
   }, [value])
@@ -91,31 +144,6 @@ const IsolatedCommandInput = memo(function IsolatedCommandInput({
       onChange={e => setValue(e.target.value)}
       onBlur={() => onSave(value)}
       style={{ resize: 'none', overflow: 'hidden' }}
-    />
-  )
-})
-
-// Simple isolated input for descriptions
-const IsolatedInput = memo(function IsolatedInput({
-  initialValue,
-  placeholder,
-  className,
-  onSave,
-}: {
-  initialValue: string
-  placeholder: string
-  className: string
-  onSave: (value: string) => void
-}) {
-  const [value, setValue] = useState(initialValue)
-  return (
-    <input
-      type="text"
-      value={value}
-      placeholder={placeholder}
-      className={className}
-      onChange={e => setValue(e.target.value)}
-      onBlur={() => onSave(value)}
     />
   )
 })
