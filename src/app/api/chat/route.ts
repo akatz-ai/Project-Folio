@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@/lib/supabase-server'
 import Anthropic from '@anthropic-ai/sdk'
-import { ProjectWithRelations, NoteTag, Note } from '@/types/database'
+import { ProjectWithRelations, NoteTag, Note, Link, LinkType, PathType } from '@/types/database'
 
 export const dynamic = 'force-dynamic'
 
 interface AIAction {
-  type: 'add_project' | 'update_project' | 'delete_project' | 'move_project' | 'add_note' | 'update_note' | 'add_command' | 'search' | 'summarize'
+  type: 'add_project' | 'update_project' | 'delete_project' | 'move_project' | 'add_note' | 'update_note' | 'add_command' | 'add_link' | 'update_link' | 'delete_link' | 'search' | 'summarize'
   position?: number | 'top' | 'bottom'
   title?: string
   description?: string
@@ -20,6 +20,14 @@ interface AIAction {
   content?: string
   command?: string
   query?: string
+  // Link-specific fields
+  link_id?: string
+  link_name?: string
+  link_type?: LinkType
+  url?: string
+  path?: string
+  path_type?: PathType
+  wsl_distro?: string
 }
 
 interface AIResponse {
@@ -43,8 +51,16 @@ Action types:
 - "add_note": Add a note to a project. Fields: project_id OR project_name, tag (Note/Bug/Feature/Idea), content
 - "update_note": Update an existing note. Fields: note_id (required), tag, content (at least one)
 - "add_command": Add a quick command. Fields: project_id OR project_name, command, description
+- "add_link": Add a link/button to a project. Fields: project_id OR project_name, link_name (required), description, link_type ("url", "vscode", or "directory"), url (for url type), path (for vscode/directory types), path_type ("wsl", "windows", or "linux"), wsl_distro (for wsl paths, defaults to "Ubuntu")
+- "update_link": Update an existing link. Fields: link_id (required), plus any fields to update (link_name, description, link_type, url, path, path_type, wsl_distro)
+- "delete_link": Delete a link. Fields: link_id (required)
 - "search": Search projects/notes. Fields: query
 - "summarize": Get summary of all projects. No fields needed.
+
+Link types explained:
+- "url": A web URL that opens in browser. Use url field.
+- "vscode": Opens a path in VS Code. Use path field with path_type.
+- "directory": A file system path (copied to clipboard). Use path field with path_type.
 
 Rules:
 1. Match project names flexibly (e.g., "fitness tracker" matches "Fitness Tracker AI")
@@ -54,6 +70,8 @@ Rules:
 5. If you can't understand the request, return empty actions with a helpful response
 6. Always maintain valid JSON format with double quotes
 7. For delete_project: NEVER delete immediately. Return empty actions and ask "Are you sure you want to delete [project name]?" Only delete if user confirms with "yes", "confirm", "do it", etc.
+8. When copying links from one project to another, use add_link with the same values for each link
+9. Default path_type to "wsl" and wsl_distro to "Ubuntu" for paths if not specified
 
 Current projects context will be provided.`
 
@@ -79,14 +97,20 @@ export async function POST(req: NextRequest) {
       apiKey: process.env.ANTHROPIC_API_KEY,
     })
 
-    // Build context with note details
+    // Build context with note and link details
     const projectContext = projects.length > 0
       ? `Current projects:\n${projects.map((p: ProjectWithRelations) => {
           const authors = p.authors?.length ? ` | Authors: ${p.authors.join(', ')}` : ''
           const notesList = p.notes.length > 0
             ? `\n  Notes: ${p.notes.map(n => `[${n.id}] ${n.tag}: "${(n.content || '').slice(0, 50)}${(n.content || '').length > 50 ? '...' : ''}"`).join(', ')}`
             : ''
-          return `- "${p.title}" (id: ${p.id}): ${p.description || 'No description'}${authors}${notesList}`
+          const linksList = p.links?.length > 0
+            ? `\n  Links: ${p.links.map((l: Link) => {
+                const linkInfo = l.link_type === 'url' ? l.url : l.path
+                return `[${l.id}] "${l.name}" (${l.link_type}): ${linkInfo || 'no value'}${l.description ? ` - ${l.description}` : ''}`
+              }).join(', ')}`
+            : ''
+          return `- "${p.title}" (id: ${p.id}): ${p.description || 'No description'}${authors}${notesList}${linksList}`
         }).join('\n')}`
       : 'No projects yet.'
 
@@ -151,7 +175,7 @@ export async function POST(req: NextRequest) {
             github_url: action.github_url || null,
             local_path: action.local_path || null,
           })
-          .select(`*, notes (*), commands (*)`)
+          .select(`*, notes (*), commands (*), links (*)`)
           .single()
 
         if (!error && data) {
@@ -172,7 +196,7 @@ export async function POST(req: NextRequest) {
               .from('projects')
               .update({ ...updates, updated_at: new Date().toISOString() })
               .eq('id', project.id)
-              .select(`*, notes (*), commands (*)`)
+              .select(`*, notes (*), commands (*), links (*)`)
               .single()
 
             if (!error && data) {
@@ -277,6 +301,70 @@ export async function POST(req: NextRequest) {
                 : p
             )
           }
+        }
+      } else if (action.type === 'add_link') {
+        const project = findProject()
+        if (project && action.link_name) {
+          const { data, error } = await supabase
+            .from('links')
+            .insert({
+              project_id: project.id,
+              user_id: user.id,
+              name: action.link_name,
+              description: action.description || null,
+              link_type: action.link_type || 'url',
+              url: action.url || null,
+              path: action.path || null,
+              path_type: action.path_type || 'wsl',
+              wsl_distro: action.wsl_distro || 'Ubuntu',
+            })
+            .select()
+            .single()
+
+          if (!error && data) {
+            updatedProjects = updatedProjects.map(p =>
+              p.id === project.id
+                ? { ...p, links: [...(p.links || []), data] }
+                : p
+            )
+          }
+        }
+      } else if (action.type === 'update_link' && action.link_id) {
+        const updates: Record<string, unknown> = {}
+        if (action.link_name) updates.name = action.link_name
+        if (action.description !== undefined) updates.description = action.description
+        if (action.link_type) updates.link_type = action.link_type
+        if (action.url !== undefined) updates.url = action.url
+        if (action.path !== undefined) updates.path = action.path
+        if (action.path_type) updates.path_type = action.path_type
+        if (action.wsl_distro) updates.wsl_distro = action.wsl_distro
+
+        if (Object.keys(updates).length > 0) {
+          const { data, error } = await supabase
+            .from('links')
+            .update(updates)
+            .eq('id', action.link_id)
+            .select()
+            .single()
+
+          if (!error && data) {
+            updatedProjects = updatedProjects.map(p => ({
+              ...p,
+              links: (p.links || []).map((l: Link) => l.id === action.link_id ? data : l)
+            }))
+          }
+        }
+      } else if (action.type === 'delete_link' && action.link_id) {
+        const { error } = await supabase
+          .from('links')
+          .delete()
+          .eq('id', action.link_id)
+
+        if (!error) {
+          updatedProjects = updatedProjects.map(p => ({
+            ...p,
+            links: (p.links || []).filter((l: Link) => l.id !== action.link_id)
+          }))
         }
       }
       // search and summarize don't modify data, just return response
