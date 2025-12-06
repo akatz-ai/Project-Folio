@@ -6,40 +6,97 @@ import { useToast } from './Toast'
 import { LinkEditModal } from './LinkEditModal'
 
 // Isolated textarea that manages its own state - parent re-renders won't affect it
+// Supports collapsible mode for long content
 const IsolatedTextarea = memo(function IsolatedTextarea({
   initialValue,
   placeholder,
   className,
   onSave,
+  collapsible = false,
+  collapsedMaxHeight = 80,
 }: {
   initialValue: string
   placeholder: string
   className: string
   onSave: (value: string) => void
+  collapsible?: boolean
+  collapsedMaxHeight?: number
 }) {
   const [value, setValue] = useState(initialValue)
+  const [isExpanded, setIsExpanded] = useState(false)
+  const [isFocused, setIsFocused] = useState(false)
+  const [needsCollapse, setNeedsCollapse] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // Auto-resize textarea to fit content
+  // Check if content exceeds collapsed height and auto-resize
   useEffect(() => {
     const textarea = textareaRef.current
     if (textarea) {
       textarea.style.height = 'auto'
-      textarea.style.height = `${textarea.scrollHeight}px`
+      const fullHeight = textarea.scrollHeight
+
+      if (collapsible && !isExpanded && !isFocused) {
+        setNeedsCollapse(fullHeight > collapsedMaxHeight)
+        textarea.style.height = `${Math.min(fullHeight, collapsedMaxHeight)}px`
+        textarea.style.overflow = fullHeight > collapsedMaxHeight ? 'hidden' : 'hidden'
+      } else {
+        textarea.style.height = `${fullHeight}px`
+        textarea.style.overflow = 'hidden'
+      }
     }
-  }, [value])
+  }, [value, isExpanded, isFocused, collapsible, collapsedMaxHeight])
+
+  const handleFocus = () => {
+    setIsFocused(true)
+  }
+
+  const handleBlur = () => {
+    setIsFocused(false)
+    onSave(value)
+  }
+
+  const showCollapsed = collapsible && needsCollapse && !isExpanded && !isFocused
 
   return (
-    <textarea
-      ref={textareaRef}
-      value={value}
-      placeholder={placeholder}
-      className={className}
-      rows={1}
-      onChange={e => setValue(e.target.value)}
-      onBlur={() => onSave(value)}
-      style={{ resize: 'none', overflow: 'hidden' }}
-    />
+    <div className="relative">
+      <textarea
+        ref={textareaRef}
+        value={value}
+        placeholder={placeholder}
+        className={className}
+        rows={1}
+        onChange={e => setValue(e.target.value)}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        style={{ resize: 'none' }}
+      />
+      {showCollapsed && (
+        <>
+          {/* Fade overlay */}
+          <div
+            className="absolute bottom-0 left-0 right-0 h-8 pointer-events-none"
+            style={{ background: 'linear-gradient(transparent, var(--bg-primary))' }}
+          />
+          {/* Expand button */}
+          <button
+            onClick={() => setIsExpanded(true)}
+            className="absolute bottom-1 right-1 text-xs text-accent-primary hover:text-accent-secondary px-2 py-0.5 rounded bg-bg-primary/80 hover:bg-bg-secondary transition-colors"
+          >
+            Show more
+          </button>
+        </>
+      )}
+      {collapsible && isExpanded && !isFocused && (
+        <div className="flex justify-end">
+          <button
+            onClick={() => setIsExpanded(false)}
+            className="text-xs text-text-muted hover:text-accent-primary mt-1"
+          >
+            Show less
+          </button>
+        </div>
+      )}
+    </div>
   )
 })
 
@@ -673,6 +730,8 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit, onDragStart, 
                             placeholder="Add a note..."
                             className="w-full outline-none px-2 py-1 rounded border border-border-light bg-transparent hover:bg-bg-secondary focus:bg-bg-secondary focus:ring-2 focus:ring-accent-primary"
                             onSave={value => updateNote(note, { content: value })}
+                            collapsible
+                            collapsedMaxHeight={100}
                           />
                         </td>
                         <td className="py-2">
@@ -729,6 +788,8 @@ export function ProjectCard({ project, onUpdate, onDelete, onEdit, onDragStart, 
                         placeholder="Add a note..."
                         className="w-full outline-none px-2 py-1 rounded border border-border-light bg-transparent hover:bg-bg-secondary focus:bg-bg-secondary focus:ring-2 focus:ring-accent-primary text-sm"
                         onSave={value => updateNote(note, { content: value })}
+                        collapsible
+                        collapsedMaxHeight={100}
                       />
                     </div>
                   ))}
